@@ -8,7 +8,7 @@ void _setAndroidConfigurations(dynamic androidConfig) {
     final androidConfigMap = Map<String, dynamic>.from(androidConfig);
 
     _setAndroidAppName(
-        androidConfigMap[_appNameKey], androidConfigMap[_customDirPath], androidConfigMap[_host]);
+        androidConfigMap[_appNameKey], androidConfigMap[_customDirPath], androidConfigMap[_host], androidConfigMap[_excludeHost]);
     _setAndroidPackageName(
         androidConfigMap[_packageNameKey], androidConfigMap[_customDirPath]);
     _createNewMainActivity(
@@ -31,7 +31,7 @@ void _setAndroidConfigurations(dynamic androidConfig) {
   }
 }
 
-void _setAndroidAppName(dynamic appName, String? customDirPath, dynamic host) {
+void _setAndroidAppName(dynamic appName, String? customDirPath, dynamic host, dynamic excludeHost) {
   try {
     if (appName == null) return;
     if (appName is! String) throw _PackageRenameErrors.invalidAppName;
@@ -52,12 +52,25 @@ void _setAndroidAppName(dynamic appName, String? customDirPath, dynamic host) {
       RegExp('android:label="(.*)"'),
       'android:label="$appName"',
     );
+
+    
+    
+
     if (host is String && host.isNotEmpty) {
-      newLabelAndroidManifestString = newLabelAndroidManifestString.replaceAll(
-        RegExp('android:host="(.*)"'),
-        'android:host="$host"',
-      );
-      _logger.i('Android Host set to: `$host` (main AndroidManifest.xml)');
+      if (excludeHost is String && excludeHost.isNotEmpty) {
+        // Replace all host attributes except the excluded one
+        newLabelAndroidManifestString = newLabelAndroidManifestString.replaceAll(
+          RegExp('android:host="(?!$excludeHost")(.*?)"'),
+          'android:host="$host"',
+        );
+        _logger.i('Android Host set to: `$host` excluding: `$excludeHost` (main AndroidManifest.xml)');
+      } else {
+        newLabelAndroidManifestString = newLabelAndroidManifestString.replaceAll(
+          RegExp('android:host="(.*?)"'),
+          'android:host="$host"',
+        );
+        _logger.i('Android Host set to: `$host` (main AndroidManifest.xml)');
+      }
     }
 
     androidManifestFile.writeAsStringSync(newLabelAndroidManifestString);

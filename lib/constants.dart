@@ -48,6 +48,7 @@ const _executableKey = 'exe_name';
 const _overrideOldPackageKey = 'override_old_package';
 const _customDirPath = 'custom_dir_path';
 const _host = 'host';
+const _excludeHost = 'exclude_host';
 
 // ! Directory Paths
 // ? Android
