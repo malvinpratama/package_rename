@@ -10,7 +10,10 @@ void _setAndroidConfigurations(dynamic androidConfig) {
     _setAndroidAppName(
         androidConfigMap[_appNameKey], androidConfigMap[_customDirPath], androidConfigMap[_host], androidConfigMap[_excludeHost]);
     _setAndroidPackageName(
-        androidConfigMap[_packageNameKey], androidConfigMap[_customDirPath]);
+      androidConfigMap[_packageNameKey],
+      androidConfigMap[_customDirPath],
+      androidConfigMap[_overrideOldPackageKey],
+    );
     _createNewMainActivity(
       lang: androidConfigMap[_languageKey],
       packageName: androidConfigMap[_packageNameKey],
@@ -90,7 +93,11 @@ void _setAndroidAppName(dynamic appName, String? customDirPath, dynamic host, dy
   }
 }
 
-void _setAndroidPackageName(dynamic packageName, String? customDirPath) {
+void _setAndroidPackageName(
+  dynamic packageName,
+  String? customDirPath,
+  dynamic overrideOldPackage,
+) {
   try {
     if (packageName == null) return;
     if (packageName is! String) throw _PackageRenameErrors.invalidPackageName;
@@ -113,6 +120,7 @@ void _setAndroidPackageName(dynamic packageName, String? customDirPath) {
     _setManifestPackageName(
       manifestFilePaths: androidManifestFilePaths,
       packageName: packageName,
+      overrideOldPackage: overrideOldPackage,
     );
 
     _setBuildGradlePackageName(
@@ -144,6 +152,7 @@ void _setAndroidPackageName(dynamic packageName, String? customDirPath) {
 void _setManifestPackageName({
   required List<String> manifestFilePaths,
   required String packageName,
+  required dynamic overrideOldPackage,
 }) {
   for (final androidManifestFilePath in manifestFilePaths) {
     final androidManifestFile = File(androidManifestFilePath);
@@ -155,10 +164,23 @@ void _setManifestPackageName({
     }
 
     final androidManifestString = androidManifestFile.readAsStringSync();
-    final newPackageAndroidManifestString = androidManifestString.replaceAll(
+    var newPackageAndroidManifestString = androidManifestString.replaceAll(
       RegExp('package="(.*?)"'),
       'package="$packageName"',
     );
+
+    // Rewrite fully-qualified android:name="<old_package>.X" -> "<new_package>.X"
+    // Needed because old-package directories are no longer deleted; without this,
+    // manifest entries that hard-code the old package would silently keep
+    // launching/binding the dead-code class from the previous env.
+    if (overrideOldPackage is String && overrideOldPackage.isNotEmpty) {
+      final escapedOldPackage = overrideOldPackage.replaceAll('.', r'\.');
+      newPackageAndroidManifestString =
+          newPackageAndroidManifestString.replaceAllMapped(
+        RegExp('android:name="$escapedOldPackage\\.([^"]+)"'),
+        (m) => 'android:name="$packageName.${m.group(1)}"',
+      );
+    }
 
     androidManifestFile.writeAsStringSync(newPackageAndroidManifestString);
 
@@ -285,8 +307,10 @@ void _createNewMainActivity({
         throw _PackageRenameErrors.invalidPackageName;
       }
 
-      // Rename(move) all files from old package directory structure
-      // to new package directory structure
+      // Copy all files from old package directory structure to new package
+      // directory structure. Old files are preserved so multiple env folders
+      // (e.g. staging + production) can coexist; only the env pointed to by
+      // build.gradle namespace + AndroidManifest is launched at runtime.
       final oldPackageDirs = overrideOldPackage.replaceAll('.', '/');
       final newPackageDirs = packageName.replaceAll('.', '/');
       final dirPath = (customDirPath is String && customDirPath.isNotEmpty)
@@ -299,26 +323,17 @@ void _createNewMainActivity({
         throw _PackageRenameErrors.androidOldDirectoryNotFound;
       }
 
-      // Loop through all files in old package directory and move them
-      // to new package directory
       final oldDirContents = oldMainActivityDir.listSync();
       final newMainActivityDir = Directory('$langDir/$newPackageDirs')
         ..createSync(recursive: true);
       for (final element in oldDirContents) {
-        element.renameSync(
-          '$langDir/$newPackageDirs/'
-          '${element.path.split(Platform.pathSeparator).last}',
-        );
-      }
-
-      // Delete empty old package directory from child to parent
-      // To avoid deleteing newly created package directory if it's name
-      // is a substring of old package name
-      // e.g. com.example and com.example2
-      var oldPackageDir = oldMainActivityDir;
-      while (oldPackageDir.listSync().isEmpty) {
-        oldPackageDir.deleteSync();
-        oldPackageDir = oldPackageDir.parent;
+        final destPath = '$langDir/$newPackageDirs/'
+            '${element.path.split(Platform.pathSeparator).last}';
+        if (element is File) {
+          element.copySync(destPath);
+        } else if (element is Directory) {
+          _copyDirectoryRecursive(element, Directory(destPath));
+        }
       }
 
       // Change occurences of old package name to new package name
@@ -354,10 +369,11 @@ void _createNewMainActivity({
       );
     } else {
       _logger.i(
-        'MainActivity.${lang == 'kotlin' ? 'kt' : 'java'} moved from package: '
+        'MainActivity.${lang == 'kotlin' ? 'kt' : 'java'} duplicated from package: '
         '`$overrideOldPackage` to `$packageName` at: '
         '${(customDirPath is String && customDirPath.isNotEmpty) ? customDirPath : _androidAppDirPath}/'
-        'src/main/$lang/${packageName.replaceAll('.', '/')}',
+        'src/main/$lang/${packageName.replaceAll('.', '/')} '
+        '(old package files preserved)',
       );
     }
   } on _PackageRenameException catch (e) {
@@ -371,5 +387,20 @@ void _createNewMainActivity({
       ..e('New MainActivity creation failed!!!');
   } finally {
     if (packageName != null) _logger.f(_minorTaskDoneLine);
+  }
+}
+
+void _copyDirectoryRecursive(Directory source, Directory destination) {
+  destination.createSync(recursive: true);
+  for (final entity in source.listSync()) {
+    final entityName = entity.path.split(Platform.pathSeparator).last;
+    if (entity is File) {
+      entity.copySync('${destination.path}/$entityName');
+    } else if (entity is Directory) {
+      _copyDirectoryRecursive(
+        entity,
+        Directory('${destination.path}/$entityName'),
+      );
+    }
   }
 }
