@@ -326,7 +326,16 @@ void _createNewMainActivity({
       final oldDirContents = oldMainActivityDir.listSync();
       final newMainActivityDir = Directory('$langDir/$newPackageDirs')
         ..createSync(recursive: true);
+      final newDirCanonical = newMainActivityDir.absolute.path;
       for (final element in oldDirContents) {
+        // Skip entity that IS the new package directory itself. Happens when
+        // new package is a sub-package of old (e.g. com.app -> com.app.sub):
+        // listing old yields the new dir as a child; copying it would create
+        // an unwanted nested folder (com.app.sub.sub).
+        if (element is Directory &&
+            element.absolute.path == newDirCanonical) {
+          continue;
+        }
         final destPath = '$langDir/$newPackageDirs/'
             '${element.path.split(Platform.pathSeparator).last}';
         if (element is File) {
@@ -391,8 +400,18 @@ void _createNewMainActivity({
 }
 
 void _copyDirectoryRecursive(Directory source, Directory destination) {
+  // Snapshot source contents BEFORE creating destination. If destination is
+  // nested inside source, creating it first would make it appear in listSync,
+  // triggering infinite recursion (copying destination into itself).
+  final contents = source.listSync();
   destination.createSync(recursive: true);
-  for (final entity in source.listSync()) {
+  final destCanonical = destination.absolute.path;
+  for (final entity in contents) {
+    // Defensive: skip entity that IS the destination (already-existing nested
+    // dir matching destination path).
+    if (entity is Directory && entity.absolute.path == destCanonical) {
+      continue;
+    }
     final entityName = entity.path.split(Platform.pathSeparator).last;
     if (entity is File) {
       entity.copySync('${destination.path}/$entityName');
